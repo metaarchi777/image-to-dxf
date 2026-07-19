@@ -105,8 +105,8 @@ function HistoryItem({ item, onDownload }) {
           color: '#d4a843', borderRadius: 6, padding: '6px 14px',
           fontSize: 13, cursor: 'pointer', transition: 'all 0.2s',
         }}
-        onMouseEnter={e => { e.target.background = 'rgba(212,168,67,0.1)' }}
-        onMouseLeave={e => { e.target.background = 'transparent' }}
+        onMouseEnter={e => { e.target.style.background = 'rgba(212,168,67,0.1)' }}
+        onMouseLeave={e => { e.target.style.background = 'transparent' }}
       >
         ↓ DXF 다운로드
       </button>
@@ -125,15 +125,13 @@ export default function Home() {
   })
   const [previewUrl, setPreviewUrl] = useState(null)
 
-  const saveHistory = (items) => {
-    setHistory(items)
-    localStorage.setItem('dxf-history', JSON.stringify(items))
-  }
-
   const handleFile = async (file) => {
     setProcessing(true)
     setResult(null)
-    setPreviewUrl(URL.createObjectURL(file))
+    setPreviewUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev)
+      return URL.createObjectURL(file)
+    })
 
     // 1단계: 업로드
     setStep(1)
@@ -156,8 +154,15 @@ export default function Home() {
     const newResult = { content, fileName, convertedAt: now }
     setResult(newResult)
 
-    const newHistory = [newResult, ...history].slice(0, 20)
-    saveHistory(newHistory)
+    setHistory(prev => {
+      const newHistory = [newResult, ...prev].slice(0, 20)
+      try {
+        localStorage.setItem('dxf-history', JSON.stringify(newHistory))
+      } catch {
+        // 저장 실패해도 무시
+      }
+      return newHistory
+    })
     setProcessing(false)
   }
 
@@ -174,7 +179,10 @@ export default function Home() {
   const reset = () => {
     setStep(0)
     setResult(null)
-    setPreviewUrl(null)
+    setPreviewUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev)
+      return null
+    })
     setProcessing(false)
   }
 

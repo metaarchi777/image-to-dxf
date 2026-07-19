@@ -3,5 +3,5 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/image-to-dxf/',  // GitHub Pages 레포지토리 이름에 맞게 설정
+  base: './',  // 상대 경로 → 저장소 이름과 무관하게 GitHub Pages에서 동작
 })
