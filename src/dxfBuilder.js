@@ -206,10 +206,11 @@ function encodeDxfText(text) {
 }
 
 function dxfHeader() {
-  return `  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1009\n  0\nENDSEC\n`;
+  return `  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1009\n  9\n$TEXTSTYLE\n  7\nMALGUN\n  0\nENDSEC\n`;
 }
 
 // LTYPE 테이블에 CONTINUOUS를 정의해야 레이어 참조 시 오류가 없음
+// STYLE 테이블에 맑은 고딕(malgun.ttf) 문자 스타일 정의 → 모든 TEXT에 적용
 function dxfTables() {
   const layers = [
     { name: '4ELE', color: 7 },
@@ -221,6 +222,11 @@ function dxfTables() {
   let s = `  0\nSECTION\n  2\nTABLES\n`;
   s += `  0\nTABLE\n  2\nLTYPE\n 70\n1\n`;
   s += `  0\nLTYPE\n  2\nCONTINUOUS\n 70\n64\n  3\nSolid line\n 72\n65\n 73\n0\n 40\n0.0\n`;
+  s += `  0\nENDTAB\n`;
+  // 문자 스타일: STANDARD(기본) + MALGUN(맑은 고딕)
+  s += `  0\nTABLE\n  2\nSTYLE\n 70\n2\n`;
+  s += `  0\nSTYLE\n  2\nSTANDARD\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n2.5\n  3\ntxt\n  4\n\n`;
+  s += `  0\nSTYLE\n  2\nMALGUN\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n2.5\n  3\nmalgun.ttf\n  4\n\n`;
   s += `  0\nENDTAB\n`;
   s += `  0\nTABLE\n  2\nLAYER\n 70\n${layers.length}\n`;
   for (const l of layers) {
@@ -248,7 +254,7 @@ export function geometryToDxf(geo) {
   }
 
   for (const t of geo.texts) {
-    e += `  0\nTEXT\n  8\n${t.layer}\n 10\n${X(t.x)}\n 20\n${Y(t.y)}\n 30\n0.0\n 40\n${(t.h * geo.k).toFixed(4)}\n  1\n${encodeDxfText(t.text)}\n`;
+    e += `  0\nTEXT\n  8\n${t.layer}\n 10\n${X(t.x)}\n 20\n${Y(t.y)}\n 30\n0.0\n 40\n${(t.h * geo.k).toFixed(4)}\n  1\n${encodeDxfText(t.text)}\n  7\nMALGUN\n`;
   }
 
   return (
@@ -286,7 +292,7 @@ export function geometryToSvg(geo) {
   }
 
   for (const t of geo.texts) {
-    s += `<text x="${t.x}" y="${t.y}" fill="${c(t.layer)}" font-size="${t.h}" font-family="'Noto Sans KR','Inter',sans-serif">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</text>`;
+    s += `<text x="${t.x}" y="${t.y}" fill="${c(t.layer)}" font-size="${t.h}" font-family="'Malgun Gothic','맑은 고딕','Noto Sans KR',sans-serif">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</text>`;
   }
 
   s += `</svg>`;
