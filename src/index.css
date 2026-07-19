@@ -1,0 +1,47 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-card: #1c2333;
+  --bg-hover: #21262d;
+  --border: #30363d;
+  --border-gold: #d4a843;
+  --gold: #d4a843;
+  --gold-light: #f0c060;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --accent: #d4a843;
+  --success: #3fb950;
+  --error: #f85149;
+  --blue: #58a6ff;
+}
+
+html, body { height: 100%; }
+
+body {
+  font-family: 'Inter', 'Noto Sans KR', sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  background-image:
+    linear-gradient(rgba(212, 168, 67, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(212, 168, 67, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+#root { min-height: 100vh; }
+
+/* 스크롤바 */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-primary); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* 버튼 */
+button { cursor: pointer; font-family: inherit; }
+
+/* 링크 */
+a { color: var(--gold); text-decoration: none; }
+a:hover { color: var(--gold-light); }

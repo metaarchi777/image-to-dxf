@@ -1,24 +1,7 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  root: path.resolve(__dirname, 'client'),
   plugins: [react()],
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-      },
-    },
-  },
-  build: {
-    outDir: path.resolve(__dirname, 'dist/public'),
-    emptyOutDir: true,
-  },
-});
+  base: '/image-to-dxf/',  // GitHub Pages 레포지토리 이름에 맞게 설정
+})

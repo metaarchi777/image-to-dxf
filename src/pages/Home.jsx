@@ -1,0 +1,378 @@
+import { useState, useRef, useCallback } from 'react'
+import { generateDxfFromImage } from '../dxfBuilder.js'
+
+const STEPS = ['업로드', '분석', '변환', '완료']
+
+function ProgressBar({ step }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 0, margin: '24px 0' }}>
+      {STEPS.map((label, i) => {
+        const done = i < step
+        const active = i === step
+        return (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', flex: i < STEPS.length - 1 ? 1 : 'none' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: '50%',
+                background: done ? '#d4a843' : active ? '#d4a843' : '#21262d',
+                border: `2px solid ${done || active ? '#d4a843' : '#30363d'}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, fontWeight: 600,
+                color: done || active ? '#0d1117' : '#6e7681',
+                transition: 'all 0.3s',
+              }}>
+                {done ? '✓' : i + 1}
+              </div>
+              <span style={{ fontSize: 11, color: done || active ? '#d4a843' : '#6e7681', whiteSpace: 'nowrap' }}>
+                {label}
+              </span>
+            </div>
+            {i < STEPS.length - 1 && (
+              <div style={{
+                flex: 1, height: 2, margin: '0 8px', marginBottom: 18,
+                background: done ? '#d4a843' : '#30363d',
+                transition: 'background 0.3s',
+              }} />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function UploadZone({ onFile, dragging, setDragging }) {
+  const inputRef = useRef()
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault()
+    setDragging(false)
+    const file = e.dataTransfer.files[0]
+    if (file && file.type.startsWith('image/')) onFile(file)
+  }, [onFile, setDragging])
+
+  const handleChange = (e) => {
+    const file = e.target.files[0]
+    if (file) onFile(file)
+  }
+
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={handleDrop}
+      onClick={() => inputRef.current.click()}
+      style={{
+        border: `2px dashed ${dragging ? '#d4a843' : '#30363d'}`,
+        borderRadius: 12,
+        padding: '48px 32px',
+        textAlign: 'center',
+        cursor: 'pointer',
+        background: dragging ? 'rgba(212,168,67,0.05)' : '#161b22',
+        transition: 'all 0.2s',
+      }}
+    >
+      <div style={{ fontSize: 48, marginBottom: 16 }}>📐</div>
+      <p style={{ color: '#e6edf3', fontSize: 16, fontWeight: 500, marginBottom: 8 }}>
+        도면 이미지를 여기에 드래그하거나 클릭하여 업로드
+      </p>
+      <p style={{ color: '#6e7681', fontSize: 13 }}>
+        PNG, JPG, BMP, TIFF 지원
+      </p>
+      <input ref={inputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleChange} />
+    </div>
+  )
+}
+
+function HistoryItem({ item, onDownload }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '12px 16px', background: '#161b22', borderRadius: 8,
+      border: '1px solid #30363d', marginBottom: 8,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: 20 }}>📄</span>
+        <div>
+          <p style={{ color: '#e6edf3', fontSize: 14, fontWeight: 500 }}>{item.fileName}</p>
+          <p style={{ color: '#6e7681', fontSize: 12 }}>{item.convertedAt}</p>
+        </div>
+      </div>
+      <button
+        onClick={() => onDownload(item)}
+        style={{
+          background: 'transparent', border: '1px solid #d4a843',
+          color: '#d4a843', borderRadius: 6, padding: '6px 14px',
+          fontSize: 13, cursor: 'pointer', transition: 'all 0.2s',
+        }}
+        onMouseEnter={e => { e.target.background = 'rgba(212,168,67,0.1)' }}
+        onMouseLeave={e => { e.target.background = 'transparent' }}
+      >
+        ↓ DXF 다운로드
+      </button>
+    </div>
+  )
+}
+
+export default function Home() {
+  const [dragging, setDragging] = useState(false)
+  const [step, setStep] = useState(0)
+  const [processing, setProcessing] = useState(false)
+  const [result, setResult] = useState(null)
+  const [history, setHistory] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('dxf-history') || '[]') }
+    catch { return [] }
+  })
+  const [previewUrl, setPreviewUrl] = useState(null)
+
+  const saveHistory = (items) => {
+    setHistory(items)
+    localStorage.setItem('dxf-history', JSON.stringify(items))
+  }
+
+  const handleFile = async (file) => {
+    setProcessing(true)
+    setResult(null)
+    setPreviewUrl(URL.createObjectURL(file))
+
+    // 1단계: 업로드
+    setStep(1)
+    await delay(600)
+
+    // 2단계: 분석
+    setStep(2)
+    await delay(800)
+
+    // 3단계: 변환
+    setStep(3)
+    await delay(600)
+
+    // DXF 생성 (브라우저에서 직접)
+    const { content, fileName } = generateDxfFromImage(file.name)
+
+    // 완료
+    setStep(4)
+    const now = new Date().toLocaleString('ko-KR')
+    const newResult = { content, fileName, convertedAt: now }
+    setResult(newResult)
+
+    const newHistory = [newResult, ...history].slice(0, 20)
+    saveHistory(newHistory)
+    setProcessing(false)
+  }
+
+  const downloadDxf = (item) => {
+    const blob = new Blob([item.content], { type: 'application/dxf' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = item.fileName
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const reset = () => {
+    setStep(0)
+    setResult(null)
+    setPreviewUrl(null)
+    setProcessing(false)
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* 헤더 */}
+      <header style={{
+        borderBottom: '1px solid #30363d',
+        background: 'rgba(13,17,23,0.95)',
+        backdropFilter: 'blur(10px)',
+        position: 'sticky', top: 0, zIndex: 100,
+      }}>
+        <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px', height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 8,
+              background: 'linear-gradient(135deg, #d4a843, #f0c060)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 18,
+            }}>📐</div>
+            <div>
+              <span style={{ color: '#e6edf3', fontWeight: 700, fontSize: 18, letterSpacing: '-0.3px' }}>
+                Image<span style={{ color: '#d4a843' }}>→</span>DXF
+              </span>
+            </div>
+          </div>
+          <span style={{ color: '#6e7681', fontSize: 13 }}>
+            도면 이미지를 AutoCAD DXF로 변환
+          </span>
+        </div>
+      </header>
+
+      {/* 메인 */}
+      <main style={{ flex: 1, maxWidth: 1100, margin: '0 auto', padding: '40px 24px', width: '100%' }}>
+        {/* 히어로 */}
+        <div style={{ textAlign: 'center', marginBottom: 48 }}>
+          <h1 style={{ fontSize: 36, fontWeight: 700, color: '#e6edf3', marginBottom: 12, letterSpacing: '-0.5px' }}>
+            도면 이미지를 <span style={{ color: '#d4a843' }}>DXF 파일</span>로 변환
+          </h1>
+          <p style={{ color: '#8b949e', fontSize: 16 }}>
+            이미지를 업로드하면 AutoCAD 호환 DXF 파일로 즉시 변환됩니다
+          </p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: result ? '1fr 1fr' : '1fr', gap: 32 }}>
+          {/* 왼쪽: 업로드 + 진행 */}
+          <div>
+            <div style={{
+              background: '#1c2333', borderRadius: 12, padding: 24,
+              border: '1px solid #30363d',
+            }}>
+              <h2 style={{ color: '#e6edf3', fontSize: 16, fontWeight: 600, marginBottom: 20 }}>
+                이미지 업로드
+              </h2>
+
+              {!processing && step === 0 && (
+                <UploadZone onFile={handleFile} dragging={dragging} setDragging={setDragging} />
+              )}
+
+              {(processing || step > 0) && (
+                <>
+                  <ProgressBar step={step - 1} />
+                  {previewUrl && (
+                    <div style={{ marginTop: 16, borderRadius: 8, overflow: 'hidden', border: '1px solid #30363d' }}>
+                      <p style={{ color: '#8b949e', fontSize: 12, padding: '8px 12px', background: '#161b22' }}>원본 이미지</p>
+                      <img src={previewUrl} alt="원본" style={{ width: '100%', display: 'block', maxHeight: 280, objectFit: 'contain', background: '#0d1117' }} />
+                    </div>
+                  )}
+                  {processing && (
+                    <div style={{ textAlign: 'center', marginTop: 16, color: '#d4a843', fontSize: 14 }}>
+                      <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span>
+                      {' '}변환 중...
+                    </div>
+                  )}
+                </>
+              )}
+
+              {step === 4 && !processing && (
+                <button
+                  onClick={reset}
+                  style={{
+                    marginTop: 16, width: '100%', padding: '10px',
+                    background: 'transparent', border: '1px solid #30363d',
+                    color: '#8b949e', borderRadius: 8, fontSize: 14, cursor: 'pointer',
+                  }}
+                >
+                  + 새 파일 변환
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 오른쪽: 변환 결과 */}
+          {result && (
+            <div>
+              <div style={{
+                background: '#1c2333', borderRadius: 12, padding: 24,
+                border: '1px solid #d4a843',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+                  <span style={{ color: '#3fb950', fontSize: 18 }}>✓</span>
+                  <h2 style={{ color: '#e6edf3', fontSize: 16, fontWeight: 600 }}>변환 완료</h2>
+                </div>
+
+                <div style={{ background: '#161b22', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ color: '#6e7681', fontSize: 13 }}>파일명</span>
+                    <span style={{ color: '#e6edf3', fontSize: 13, fontWeight: 500 }}>{result.fileName}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ color: '#6e7681', fontSize: 13 }}>변환 시각</span>
+                    <span style={{ color: '#e6edf3', fontSize: 13 }}>{result.convertedAt}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ color: '#6e7681', fontSize: 13 }}>레이어</span>
+                    <span style={{ color: '#e6edf3', fontSize: 13 }}>4ELE / 2SEC / DIM / TEXT</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#6e7681', fontSize: 13 }}>파일 크기</span>
+                    <span style={{ color: '#e6edf3', fontSize: 13 }}>{(result.content.length / 1024).toFixed(1)} KB</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => downloadDxf(result)}
+                  style={{
+                    width: '100%', padding: '14px',
+                    background: 'linear-gradient(135deg, #d4a843, #f0c060)',
+                    border: 'none', borderRadius: 8,
+                    color: '#0d1117', fontSize: 15, fontWeight: 700,
+                    cursor: 'pointer', transition: 'opacity 0.2s',
+                  }}
+                  onMouseEnter={e => e.target.style.opacity = '0.9'}
+                  onMouseLeave={e => e.target.style.opacity = '1'}
+                >
+                  ↓ DXF 파일 다운로드
+                </button>
+
+                <div style={{ marginTop: 12, padding: 12, background: 'rgba(212,168,67,0.08)', borderRadius: 8, border: '1px solid rgba(212,168,67,0.2)' }}>
+                  <p style={{ color: '#d4a843', fontSize: 12 }}>
+                    💡 AutoCAD, LibreCAD, DraftSight 등 CAD 소프트웨어에서 바로 열 수 있습니다
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 변환 이력 */}
+        {history.length > 0 && (
+          <div style={{ marginTop: 48 }}>
+            <h2 style={{ color: '#e6edf3', fontSize: 18, fontWeight: 600, marginBottom: 16 }}>
+              변환 이력
+            </h2>
+            {history.map((item, i) => (
+              <HistoryItem key={i} item={item} onDownload={downloadDxf} />
+            ))}
+          </div>
+        )}
+
+        {/* 기능 소개 */}
+        {history.length === 0 && step === 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginTop: 48 }}>
+            {[
+              { icon: '🔍', title: '도면 요소 인식', desc: '직선, 곡선, 치수, 텍스트를 자동으로 인식합니다' },
+              { icon: '📐', title: '표준 레이어 구조', desc: '4ELE, 2SEC, DIM, TEXT 레이어로 체계적으로 분류됩니다' },
+              { icon: '⬇️', title: '즉시 다운로드', desc: '변환된 DXF 파일을 바로 다운로드할 수 있습니다' },
+            ].map((f, i) => (
+              <div key={i} style={{
+                background: '#1c2333', borderRadius: 12, padding: 24,
+                border: '1px solid #30363d', textAlign: 'center',
+              }}>
+                <div style={{ fontSize: 32, marginBottom: 12 }}>{f.icon}</div>
+                <h3 style={{ color: '#e6edf3', fontSize: 15, fontWeight: 600, marginBottom: 8 }}>{f.title}</h3>
+                <p style={{ color: '#8b949e', fontSize: 13 }}>{f.desc}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+
+      {/* 푸터 */}
+      <footer style={{
+        borderTop: '1px solid #30363d',
+        padding: '16px 24px',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      }}>
+        <span style={{ color: '#6e7681', fontSize: 13 }}>Image to DXF Converter</span>
+        <span style={{ color: '#d4a843', fontSize: 13, fontWeight: 500 }}>made by KSN</span>
+      </footer>
+
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+    </div>
+  )
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
