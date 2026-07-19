@@ -155,7 +155,9 @@ export default function Home() {
     setResult(newResult)
 
     setHistory(prev => {
-      const newHistory = [newResult, ...prev].slice(0, 20)
+      // 이력에는 SVG 미리보기를 제외하고 저장 (localStorage 용량 절약)
+      const { svg, ...historyEntry } = newResult
+      const newHistory = [historyEntry, ...prev].slice(0, 20)
       try {
         localStorage.setItem('dxf-history', JSON.stringify(newHistory))
       } catch {
@@ -287,6 +289,13 @@ export default function Home() {
                   <h2 style={{ color: '#e6edf3', fontSize: 16, fontWeight: 600 }}>변환 완료</h2>
                 </div>
 
+                {result.svg && (
+                  <div style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid #30363d', marginBottom: 16 }}>
+                    <p style={{ color: '#8b949e', fontSize: 12, padding: '8px 12px', background: '#161b22' }}>생성된 CAD 도면</p>
+                    <div style={{ padding: 8, background: '#0d1117' }} dangerouslySetInnerHTML={{ __html: result.svg }} />
+                  </div>
+                )}
+
                 <div style={{ background: '#161b22', borderRadius: 8, padding: 16, marginBottom: 16 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                     <span style={{ color: '#6e7681', fontSize: 13 }}>파일명</span>
@@ -323,7 +332,7 @@ export default function Home() {
 
                 <div style={{ marginTop: 12, padding: 12, background: 'rgba(212,168,67,0.08)', borderRadius: 8, border: '1px solid rgba(212,168,67,0.2)' }}>
                   <p style={{ color: '#d4a843', fontSize: 12 }}>
-                    💡 AutoCAD, LibreCAD, DraftSight 등 CAD 소프트웨어에서 바로 열 수 있습니다
+                    💡 다운로드된 DXF 파일은 CAD 소프트웨어에서 열어서 확인하세요
                   </p>
                 </div>
               </div>
