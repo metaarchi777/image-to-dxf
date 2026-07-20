@@ -59,13 +59,25 @@ export function pathsToGeometry(paths, W, H, texts = [], targetWidthMm = 570) {
   const k = targetWidthMm / W;
   return {
     polylines: paths.map((pts) => ({ pts, layer: 'DRAW' })),
-    texts: texts.map((t) => ({
-      x: t.x0,
-      y: t.y1,                                    // 베이스라인 = 박스 하단
-      text: t.text,
-      h: Math.max(6, (t.y1 - t.y0) * 0.85),       // 글자 높이
-      layer: 'TEXT',
-    })),
+    texts: texts.map((t) => {
+      const rot = t.rot || 0;
+      if (rot === 90) {
+        // 아래→위로 쓰인 세로 글자: 베이스라인 시작 = 우하단
+        return { x: t.x1, y: t.y1, text: t.text, h: Math.max(6, (t.x1 - t.x0) * 0.85), rot, layer: 'TEXT' };
+      }
+      if (rot === 270) {
+        // 위→아래로 쓰인 세로 글자: 베이스라인 시작 = 좌상단
+        return { x: t.x0, y: t.y0, text: t.text, h: Math.max(6, (t.x1 - t.x0) * 0.85), rot, layer: 'TEXT' };
+      }
+      return {
+        x: t.x0,
+        y: t.y1,                                    // 베이스라인 = 박스 하단
+        text: t.text,
+        h: Math.max(6, (t.y1 - t.y0) * 0.85),       // 글자 높이
+        rot: 0,
+        layer: 'TEXT',
+      };
+    }),
     W, H, k,
     scaleH: H * k,
   };
@@ -96,9 +108,10 @@ export function geometryToDxf(geo) {
     }
   }
 
-  // 인식된 문자 → TEXT 엔티티 (맑은 고딕 스타일, 한글은 \U+ 인코딩)
+  // 인식된 문자 → TEXT 엔티티 (맑은 고딕 스타일, 한글은 \U+ 인코딩, 세로 글자는 회전각 부여)
   for (const t of geo.texts || []) {
-    e += `  0\nTEXT\n  8\n${t.layer}\n 10\n${X(t.x)}\n 20\n${Y(t.y)}\n 30\n0.0\n 40\n${(t.h * k).toFixed(3)}\n  1\n${encodeDxfText(t.text)}\n  7\nMALGUN\n`;
+    const rotCode = t.rot ? ` 50\n${t.rot}\n` : '';
+    e += `  0\nTEXT\n  8\n${t.layer}\n 10\n${X(t.x)}\n 20\n${Y(t.y)}\n 30\n0.0\n 40\n${(t.h * k).toFixed(3)}\n${rotCode}  1\n${encodeDxfText(t.text)}\n  7\nMALGUN\n`;
   }
 
   return (
@@ -126,7 +139,9 @@ export function geometryToSvg(geo) {
   }
   for (const t of geo.texts || []) {
     const esc = t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    s += `<text x="${t.x.toFixed(1)}" y="${t.y.toFixed(1)}" fill="#7ee2a8" font-size="${t.h.toFixed(1)}" font-family="'Malgun Gothic','맑은 고딕','Noto Sans KR',sans-serif">${esc}</text>`;
+    const tr = t.rot === 90 ? ` transform="rotate(-90 ${t.x.toFixed(1)} ${t.y.toFixed(1)})"`
+             : t.rot === 270 ? ` transform="rotate(90 ${t.x.toFixed(1)} ${t.y.toFixed(1)})"` : '';
+    s += `<text x="${t.x.toFixed(1)}" y="${t.y.toFixed(1)}"${tr} fill="#7ee2a8" font-size="${t.h.toFixed(1)}" font-family="'Malgun Gothic','맑은 고딕','Noto Sans KR',sans-serif">${esc}</text>`;
   }
   s += `</svg>`;
   return s;
@@ -156,6 +171,7 @@ export async function generateDxfFromImage(file) {
     // 작업 해상도 좌표로 환산
     texts = raw.map((t) => ({
       text: t.text,
+      rot: t.rot || 0,
       x0: t.x0 / s, y0: t.y0 / s, x1: t.x1 / s, y1: t.y1 / s,
       wordBoxes: t.wordBoxes.map((b) => ({ x0: b.x0 / s, y0: b.y0 / s, x1: b.x1 / s, y1: b.y1 / s })),
     }));
