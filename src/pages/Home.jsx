@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import { generateDxfFromImage } from '../dxfBuilder.js'
 
-const STEPS = ['업로드', '분석', '변환', '완료']
+const STEPS = ['업로드', '문자 인식·분석', '변환', '완료']
 
 function ProgressBar({ step }) {
   return (
@@ -263,6 +263,9 @@ export default function Home() {
                     <div style={{ textAlign: 'center', marginTop: 16, color: '#d4a843', fontSize: 14 }}>
                       <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span>
                       {' '}변환 중...
+                      <p style={{ color: '#6e7681', fontSize: 12, marginTop: 8 }}>
+                        첫 변환 시 문자 인식 모델(약 15MB)을 내려받아 시간이 걸릴 수 있습니다
+                      </p>
                     </div>
                   )}
                 </>
@@ -313,7 +316,7 @@ export default function Home() {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                     <span style={{ color: '#6e7681', fontSize: 13 }}>추출 결과</span>
-                    <span style={{ color: '#e6edf3', fontSize: 13 }}>{result.stats ? `경로 ${result.stats.pathCount}개 · 정점 ${result.stats.pointCount}개` : '-'}</span>
+                    <span style={{ color: '#e6edf3', fontSize: 13 }}>{result.stats ? `경로 ${result.stats.pathCount} · 정점 ${result.stats.pointCount} · 문자 ${result.stats.textCount ?? 0}` : '-'}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: '#6e7681', fontSize: 13 }}>파일 크기</span>
@@ -362,7 +365,7 @@ export default function Home() {
         {history.length === 0 && step === 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginTop: 48 }}>
             {[
-              { icon: '🔍', title: '실제 이미지 추적', desc: '업로드한 이미지의 선을 자동으로 추적하여 벡터로 변환합니다' },
+              { icon: '🔍', title: '문자 인식 + 형상 추적', desc: '글자는 편집 가능한 문자로, 선은 벡터로 자동 변환합니다' },
               { icon: '📐', title: 'DXF R12 표준', desc: 'AutoCAD 등 대부분의 CAD에서 열리는 표준 형식으로 출력됩니다' },
               { icon: '⬇️', title: '즉시 다운로드', desc: '변환된 DXF 파일을 바로 다운로드할 수 있습니다' },
             ].map((f, i) => (

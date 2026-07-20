@@ -7,7 +7,8 @@
  * made by KSN
  */
 
-import { vectorizeImageFile } from './imageVectorizer.js';
+import { loadImageToCanvas, vectorizePixels, blankRegions } from './imageVectorizer.js';
+import { recognizeText } from './textRecognizer.js';
 
 // ============================================================
 // 공통: 비ASCII 문자(한글 등)를 \U+XXXX로 인코딩
@@ -43,20 +44,28 @@ function dxfTables() {
   s += `  0\nSTYLE\n  2\nSTANDARD\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n2.5\n  3\ntxt\n  4\n\n`;
   s += `  0\nSTYLE\n  2\nMALGUN\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n2.5\n  3\nmalgun.ttf\n  4\n\n`;
   s += `  0\nENDTAB\n`;
-  s += `  0\nTABLE\n  2\nLAYER\n 70\n1\n`;
+  s += `  0\nTABLE\n  2\nLAYER\n 70\n2\n`;
   s += `  0\nLAYER\n  2\nDRAW\n 70\n64\n 62\n7\n  6\nCONTINUOUS\n`;
+  s += `  0\nLAYER\n  2\nTEXT\n 70\n64\n 62\n7\n  6\nCONTINUOUS\n`;
   s += `  0\nENDTAB\n  0\nENDSEC\n`;
   return s;
 }
 
 // ============================================================
-// 추출 경로 → 기하 구조
+// 추출 경로 + 인식 텍스트 → 기하 구조
 // 픽셀 좌표(y 아래방향) 유지, DXF 변환 시 mm 스케일 + y축 반전
 // ============================================================
-export function pathsToGeometry(paths, W, H, targetWidthMm = 570) {
+export function pathsToGeometry(paths, W, H, texts = [], targetWidthMm = 570) {
   const k = targetWidthMm / W;
   return {
     polylines: paths.map((pts) => ({ pts, layer: 'DRAW' })),
+    texts: texts.map((t) => ({
+      x: t.x0,
+      y: t.y1,                                    // 베이스라인 = 박스 하단
+      text: t.text,
+      h: Math.max(6, (t.y1 - t.y0) * 0.85),       // 글자 높이
+      layer: 'TEXT',
+    })),
     W, H, k,
     scaleH: H * k,
   };
@@ -87,6 +96,11 @@ export function geometryToDxf(geo) {
     }
   }
 
+  // 인식된 문자 → TEXT 엔티티 (맑은 고딕 스타일, 한글은 \U+ 인코딩)
+  for (const t of geo.texts || []) {
+    e += `  0\nTEXT\n  8\n${t.layer}\n 10\n${X(t.x)}\n 20\n${Y(t.y)}\n 30\n0.0\n 40\n${(t.h * k).toFixed(3)}\n  1\n${encodeDxfText(t.text)}\n  7\nMALGUN\n`;
+  }
+
   return (
     dxfHeader() +
     dxfTables() +
@@ -110,21 +124,59 @@ export function geometryToSvg(geo) {
     }
     s += `<path d="${d}" fill="none" stroke="#e6edf3" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
+  for (const t of geo.texts || []) {
+    const esc = t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    s += `<text x="${t.x.toFixed(1)}" y="${t.y.toFixed(1)}" fill="#7ee2a8" font-size="${t.h.toFixed(1)}" font-family="'Malgun Gothic','맑은 고딕','Noto Sans KR',sans-serif">${esc}</text>`;
+  }
   s += `</svg>`;
   return s;
 }
 
 // ============================================================
-// 메인 진입점: 업로드된 이미지 파일 → DXF + 미리보기
+// 메인 진입점: 이미지 → 문자 인식 → 형상 추적 → DXF + 미리보기
 // ============================================================
 export async function generateDxfFromImage(file) {
-  const { paths, width, height, pointCount } = await vectorizeImageFile(file);
-  const geo = pathsToGeometry(paths, width, height);
+  const { canvas, ctx, width, height } = await loadImageToCanvas(file);
+
+  // 1) 문자 인식 (고해상도 확대 캔버스에서 수행, 실패 시 빈 결과)
+  let texts = [];
+  try {
+    const s = Math.min(2, 2400 / Math.max(width, height));
+    let ocrCanvas = canvas;
+    if (s > 1.01) {
+      ocrCanvas = document.createElement('canvas');
+      ocrCanvas.width = Math.round(width * s);
+      ocrCanvas.height = Math.round(height * s);
+      const octx = ocrCanvas.getContext('2d');
+      octx.imageSmoothingEnabled = true;
+      octx.imageSmoothingQuality = 'high';
+      octx.drawImage(canvas, 0, 0, ocrCanvas.width, ocrCanvas.height);
+    }
+    const raw = await recognizeText(ocrCanvas);
+    // 작업 해상도 좌표로 환산
+    texts = raw.map((t) => ({
+      text: t.text,
+      x0: t.x0 / s, y0: t.y0 / s, x1: t.x1 / s, y1: t.y1 / s,
+      wordBoxes: t.wordBoxes.map((b) => ({ x0: b.x0 / s, y0: b.y0 / s, x1: b.x1 / s, y1: b.y1 / s })),
+    }));
+  } catch (e) {
+    console.warn('문자 인식 생략:', e);
+  }
+
+  // 2) 인식된 글자 영역을 지운 뒤 형상 추적 (글자가 형상으로 중복 추적되는 것 방지)
+  const imageData = ctx.getImageData(0, 0, width, height);
+  if (texts.length) {
+    blankRegions(imageData.data, width, height, texts.flatMap((t) => t.wordBoxes), 3);
+  }
+  const { paths, pointCount } = vectorizePixels(imageData.data, width, height);
+
+  // 3) DXF + 미리보기 생성
+  const geo = pathsToGeometry(paths, width, height, texts);
   const baseName = (file.name || 'drawing').replace(/\.[^.]+$/, '');
   return {
     content: geometryToDxf(geo),
     fileName: `${baseName}.dxf`,
     svg: geometryToSvg(geo),
-    stats: { pathCount: paths.length, pointCount },
+    stats: { pathCount: paths.length, pointCount, textCount: texts.length },
   };
 }
