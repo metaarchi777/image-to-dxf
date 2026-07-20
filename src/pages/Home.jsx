@@ -135,23 +135,29 @@ export default function Home() {
 
     // 1단계: 업로드
     setStep(1)
-    await delay(600)
+    await delay(400)
 
-    // 2단계: 분석
+    // 2단계: 이미지 분석 + 벡터 추출 (실제 처리)
     setStep(2)
-    await delay(800)
+    let dxfResult
+    try {
+      dxfResult = await generateDxfFromImage(file)
+    } catch (err) {
+      console.error('변환 실패:', err)
+      alert('이미지를 변환할 수 없습니다. 다른 이미지 파일로 시도해 주세요.')
+      setStep(0)
+      setProcessing(false)
+      return
+    }
 
-    // 3단계: 변환
+    // 3단계: DXF 생성
     setStep(3)
-    await delay(600)
-
-    // DXF 생성 (브라우저에서 직접)
-    const { content, fileName } = generateDxfFromImage(file.name)
+    await delay(400)
 
     // 완료
     setStep(4)
     const now = new Date().toLocaleString('ko-KR')
-    const newResult = { content, fileName, convertedAt: now }
+    const newResult = { ...dxfResult, convertedAt: now }
     setResult(newResult)
 
     setHistory(prev => {
@@ -306,8 +312,8 @@ export default function Home() {
                     <span style={{ color: '#e6edf3', fontSize: 13 }}>{result.convertedAt}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ color: '#6e7681', fontSize: 13 }}>레이어</span>
-                    <span style={{ color: '#e6edf3', fontSize: 13 }}>4ELE / 2SEC / DIM / TEXT</span>
+                    <span style={{ color: '#6e7681', fontSize: 13 }}>추출 결과</span>
+                    <span style={{ color: '#e6edf3', fontSize: 13 }}>{result.stats ? `경로 ${result.stats.pathCount}개 · 정점 ${result.stats.pointCount}개` : '-'}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: '#6e7681', fontSize: 13 }}>파일 크기</span>
@@ -356,8 +362,8 @@ export default function Home() {
         {history.length === 0 && step === 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginTop: 48 }}>
             {[
-              { icon: '🔍', title: '도면 요소 인식', desc: '직선, 곡선, 치수, 텍스트를 자동으로 인식합니다' },
-              { icon: '📐', title: '표준 레이어 구조', desc: '4ELE, 2SEC, DIM, TEXT 레이어로 체계적으로 분류됩니다' },
+              { icon: '🔍', title: '실제 이미지 추적', desc: '업로드한 이미지의 선을 자동으로 추적하여 벡터로 변환합니다' },
+              { icon: '📐', title: 'DXF R12 표준', desc: 'AutoCAD 등 대부분의 CAD에서 열리는 표준 형식으로 출력됩니다' },
               { icon: '⬇️', title: '즉시 다운로드', desc: '변환된 DXF 파일을 바로 다운로드할 수 있습니다' },
             ].map((f, i) => (
               <div key={i} style={{
