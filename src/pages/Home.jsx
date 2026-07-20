@@ -316,7 +316,7 @@ export default function Home() {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                     <span style={{ color: '#6e7681', fontSize: 13 }}>추출 결과</span>
-                    <span style={{ color: '#e6edf3', fontSize: 13 }}>{result.stats ? `경로 ${result.stats.pathCount} · 정점 ${result.stats.pointCount} · 문자 ${result.stats.textCount ?? 0}` : '-'}</span>
+                    <span style={{ color: '#e6edf3', fontSize: 13 }}>{result.stats ? `벽체 ${result.stats.wallCount ?? 0} · 경로 ${result.stats.pathCount} · 문자 ${result.stats.textCount ?? 0}` : '-'}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: '#6e7681', fontSize: 13 }}>파일 크기</span>

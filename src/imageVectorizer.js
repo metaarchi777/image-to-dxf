@@ -115,6 +115,184 @@ export function despeckle(bin, w, h, minArea = 12) {
   return bin;
 }
 
+
+// ============================================================
+// 2-2. 잉크 추출 (자동 모드 선택)
+//  - 컬러 도면(마루·타일 등 유채색 채움이 많음): 어둡고 무채색인 픽셀만
+//    → 바닥 텍스처·워터마크·색 채움을 배제하고 벽체·문·기구 선만 추출
+//  - 흑백/단색 도면: 기존 Bradley 적응형 이진화
+// ============================================================
+export function extractInk(rgba, w, h) {
+  const n = w * h;
+  let colored = 0, samples = 0;
+  for (let i = 0; i < n; i += 7) {
+    const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    if (mx - mn > 50 && mx > 60) colored++;
+    samples++;
+  }
+  const colorMode = colored / samples > 0.12;
+
+  if (!colorMode) {
+    return { bin: binarize(rgba, w, h), colorMode: false };
+  }
+
+  // 컬러 도면 모드: 어둡고 무채색인 픽셀만 잉크로
+  //  - 진한 선(벽·문·기구): 밝기 < 120, 채도차 < 80
+  //  - 어두운 회색 글자(방 이름 등): 밝기 < 140, 채도차 < 45
+  //  → 유채색 마루결(밝기~138, 채도~126)과 연회색 워터마크는 배제됨
+  const bin = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    const sat = Math.max(r, g, b) - Math.min(r, g, b);
+    if ((lum < 120 && sat < 80) || (lum < 140 && sat < 45)) bin[i] = 1;
+  }
+  for (let x = 0; x < w; x++) { bin[x] = 0; bin[(h - 1) * w + x] = 0; }
+  for (let y = 0; y < h; y++) { bin[y * w] = 0; bin[y * w + w - 1] = 0; }
+  return { bin, colorMode: true };
+}
+
+// ============================================================
+// 2-3. 거리 변환 (city-block, 두께 판정용)
+// ============================================================
+export function distanceTransform(bin, w, h) {
+  // chamfer 3-4: 직교 +3, 대각 +4 (유클리드 근사, 대각 두께 과대평가 방지)
+  // 반환 값 단위 = 픽셀 x 3
+  const n = w * h;
+  const INF = 60000;
+  const d = new Uint16Array(n);
+  for (let i = 0; i < n; i++) d[i] = bin[i] ? INF : 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!d[i]) continue;
+      let v = d[i];
+      if (x > 0) v = Math.min(v, d[i - 1] + 3);
+      if (y > 0) {
+        v = Math.min(v, d[i - w] + 3);
+        if (x > 0) v = Math.min(v, d[i - w - 1] + 4);
+        if (x < w - 1) v = Math.min(v, d[i - w + 1] + 4);
+      }
+      d[i] = v;
+    }
+  }
+  for (let y = h - 1; y >= 0; y--) {
+    for (let x = w - 1; x >= 0; x--) {
+      const i = y * w + x;
+      if (!d[i]) continue;
+      let v = d[i];
+      if (x < w - 1) v = Math.min(v, d[i + 1] + 3);
+      if (y < h - 1) {
+        v = Math.min(v, d[i + w] + 3);
+        if (x < w - 1) v = Math.min(v, d[i + w + 1] + 4);
+        if (x > 0) v = Math.min(v, d[i + w - 1] + 4);
+      }
+      d[i] = v;
+    }
+  }
+  return d;
+}
+
+// ============================================================
+// 2-4. 두께 기반 분리: 두꺼운 벽체 영역 vs 얇은 선
+//  코어(dist>=3)에서 dist>=2를 따라 재구성 → 벽체 본체,
+//  가장자리 스킨(dist==1) 1회 흡수. 나머지가 얇은 선(문 호, 기구 등)
+// ============================================================
+export function splitThickThin(bin, dist, w, h, scale = 1) {
+  const n = w * h;
+  // 두께 기준은 '원본 해상도' 기준: 원본 반폭 3px 이상만 벽체(채움 영역)로 판정
+  // 업스케일 시 얇은 선의 안티앨리어싱 헤일로가 벽체로 오분류되는 것을 방지
+  const coreD = Math.max(9, Math.round(9 * scale));   // 원본 반폭 3px 이상 (chamfer x3 단위)
+  const bodyD = Math.max(6, Math.round(6 * scale));   // 원본 반폭 2px 이상
+  const skinIter = Math.max(1, Math.round(scale));
+
+  const thick = new Uint8Array(n);
+  const stack = [];
+  for (let i = 0; i < n; i++) {
+    if (dist[i] >= coreD) { thick[i] = 1; stack.push(i); }
+  }
+  const NB4 = [-1, 1, -w, w];
+  while (stack.length) {
+    const i = stack.pop();
+    for (const o of NB4) {
+      const c = i + o;
+      if (c < 0 || c >= n) continue;
+      if (!thick[c] && dist[c] >= bodyD) { thick[c] = 1; stack.push(c); }
+    }
+  }
+  const NB8 = [-w - 1, -w, -w + 1, -1, 1, w - 1, w, w + 1];
+  for (let it = 0; it < skinIter; it++) {
+    const skin = [];
+    for (let i = 0; i < n; i++) {
+      if (bin[i] && !thick[i] && dist[i] < bodyD) {
+        for (const o of NB8) {
+          if (thick[i + o]) { skin.push(i); break; }
+        }
+      }
+    }
+    for (const i of skin) thick[i] = 1;
+  }
+
+  const thin = new Uint8Array(n);
+  for (let i = 0; i < n; i++) thin[i] = bin[i] && !thick[i] ? 1 : 0;
+  return { thickMask: thick, thinMask: thin };
+}
+
+// ============================================================
+// 2-5. 두꺼운 영역의 외곽선 추적 (픽셀 경계 체이닝)
+//  잉크를 시계방향으로 감싸는 방향성 간선을 만들고 연결 → 폐곡선들
+//  벽체를 스켈레톤 중심선이 아닌 '외곽선 폴리곤'으로 표현
+// ============================================================
+export function traceBoundaries(mask, w, h) {
+  const at = (x, y) => (x >= 0 && y >= 0 && x < w && y < h ? mask[y * w + x] : 0);
+  const W1 = w + 1;
+  const edges = new Map();
+  const addE = (x, y, dir) => {
+    const v = y * W1 + x;
+    let a = edges.get(v);
+    if (!a) { a = []; edges.set(v, a); }
+    a.push(dir);
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!mask[y * w + x]) continue;
+      if (!at(x, y - 1)) addE(x, y, 0);
+      if (!at(x + 1, y)) addE(x + 1, y, 1);
+      if (!at(x, y + 1)) addE(x + 1, y + 1, 2);
+      if (!at(x - 1, y)) addE(x, y + 1, 3);
+    }
+  }
+  const DX = [1, 0, -1, 0], DY = [0, 1, 0, -1];
+  const loops = [];
+  for (const [startV, dirList] of edges) {
+    while (dirList.length) {
+      let dir = dirList.pop();
+      const sx = startV % W1, sy = (startV / W1) | 0;
+      const pts = [[sx, sy]];
+      let cx = sx + DX[dir], cy = sy + DY[dir];
+      let guard = 0;
+      while (!(cx === sx && cy === sy) && guard++ < 4000000) {
+        const list = edges.get(cy * W1 + cx);
+        if (!list || !list.length) break;
+        let pick = -1, idx = -1;
+        for (const cand of [(dir + 3) % 4, dir, (dir + 1) % 4]) {
+          const j = list.indexOf(cand);
+          if (j !== -1) { pick = cand; idx = j; break; }
+        }
+        if (pick === -1) { idx = list.length - 1; pick = list[idx]; }
+        list.splice(idx, 1);
+        if (pick !== dir) pts.push([cx, cy]);
+        dir = pick;
+        cx += DX[dir]; cy += DY[dir];
+      }
+      pts.push([sx, sy]);
+      if (pts.length >= 5) loops.push(pts);
+    }
+  }
+  return loops;
+}
+
 // ============================================================
 // 3. Zhang-Suen 세선화 → 1px 스켈레톤
 // ============================================================
@@ -555,32 +733,41 @@ export function vectorizePixels(rgba, width, height, opts = {}) {
   const minPathLen = opts.minPathLen ?? 6;
   const maxPoints = opts.maxPoints ?? 24000;
 
-  const bin = binarize(rgba, width, height);
+  // 1) 잉크 추출 (컬러 도면 자동 감지: 마루결·타일·워터마크 배제)
+  const { bin, colorMode } = extractInk(rgba, width, height);
   despeckle(bin, width, height, opts.minArea ?? 12);
-  const skel = thin(bin, width, height);
-  cleanupSkeleton(skel, width, height);
 
+  // 2) 두께 기반 분리: 두꺼운 벽체 ↔ 얇은 선(문 호·기구·치수)
+  const dist = distanceTransform(bin, width, height);
+  const { thickMask, thinMask } = splitThickThin(bin, dist, width, height, opts.scale ?? 1);
+
+  // 3) 벽체: 외곽선 폴리곤 (스켈레톤이 아닌 컨투어)
+  let walls = traceBoundaries(thickMask, width, height)
+    .filter((p) => pathLength(p) >= 24)
+    .map((p) => snapOrtho(fitPath(p, opts.wallTol ?? 1.4)))
+    .filter((p) => pathLength(p) >= 12);
+
+  // 4) 얇은 선: 세선화 → 추적 → 병합 → 적합 (기존 파이프라인)
+  const skel = thin(thinMask, width, height);
+  cleanupSkeleton(skel, width, height);
   let items = tracePaths(skel, width, height);
   items = pruneSpurs(items, opts.spurLen ?? 7);
   items = clusterJunctions(items, opts.junctionRadius ?? 3);
   let paths = mergeContinuations(items, opts.mergeAngle ?? 35);
-
-  // 노이즈 경로 제거
   paths = paths.filter((p) => pathLength(p) >= minPathLen);
 
-  // 직선 적합 + 스냅
   let tol = fitTol;
   const doFit = (t) =>
     paths.map((p) => snapOrtho(fitPath(p, t))).filter((p) => pathLength(p) >= 2);
   let fitted = doFit(tol);
-  let total = fitted.reduce((s, p) => s + p.length, 0);
+  let total = fitted.reduce((s, p) => s + p.length, 0) + walls.reduce((s, p) => s + p.length, 0);
   while (total > maxPoints && tol < 8) {
     tol *= 1.5;
     fitted = doFit(tol);
-    total = fitted.reduce((s, p) => s + p.length, 0);
+    total = fitted.reduce((s, p) => s + p.length, 0) + walls.reduce((s, p) => s + p.length, 0);
   }
 
-  return { paths: fitted, width, height, pointCount: total };
+  return { paths: fitted, walls, width, height, pointCount: total, colorMode };
 }
 
 // ============================================================
@@ -609,13 +796,13 @@ export async function loadImageToCanvas(file, opts = {}) {
   ctx.drawImage(bmp, 0, 0, w, h);
   bmp.close?.();
 
-  return { canvas, ctx, width: w, height: h };
+  return { canvas, ctx, width: w, height: h, scale };
 }
 
 export async function vectorizeImageFile(file, opts = {}) {
-  const { ctx, width, height } = await loadImageToCanvas(file, opts);
+  const { ctx, width, height, scale } = await loadImageToCanvas(file, opts);
   const { data } = ctx.getImageData(0, 0, width, height);
-  return vectorizePixels(data, width, height, opts);
+  return vectorizePixels(data, width, height, { ...opts, scale });
 }
 
 // ============================================================

@@ -7,7 +7,7 @@
  * made by KSN
  */
 
-import { loadImageToCanvas, vectorizePixels, blankRegions } from './imageVectorizer.js';
+import { loadImageToCanvas, vectorizePixels, blankRegions, extractInk } from './imageVectorizer.js';
 import { recognizeText } from './textRecognizer.js';
 
 // ============================================================
@@ -44,8 +44,9 @@ function dxfTables() {
   s += `  0\nSTYLE\n  2\nSTANDARD\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n2.5\n  3\ntxt\n  4\n\n`;
   s += `  0\nSTYLE\n  2\nMALGUN\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n2.5\n  3\nmalgun.ttf\n  4\n\n`;
   s += `  0\nENDTAB\n`;
-  s += `  0\nTABLE\n  2\nLAYER\n 70\n2\n`;
-  s += `  0\nLAYER\n  2\nDRAW\n 70\n64\n 62\n7\n  6\nCONTINUOUS\n`;
+  s += `  0\nTABLE\n  2\nLAYER\n 70\n3\n`;
+  s += `  0\nLAYER\n  2\nWALL\n 70\n64\n 62\n7\n  6\nCONTINUOUS\n`;
+  s += `  0\nLAYER\n  2\nDRAW\n 70\n64\n 62\n4\n  6\nCONTINUOUS\n`;
   s += `  0\nLAYER\n  2\nTEXT\n 70\n64\n 62\n7\n  6\nCONTINUOUS\n`;
   s += `  0\nENDTAB\n  0\nENDSEC\n`;
   return s;
@@ -55,10 +56,13 @@ function dxfTables() {
 // 추출 경로 + 인식 텍스트 → 기하 구조
 // 픽셀 좌표(y 아래방향) 유지, DXF 변환 시 mm 스케일 + y축 반전
 // ============================================================
-export function pathsToGeometry(paths, W, H, texts = [], targetWidthMm = 570) {
+export function pathsToGeometry(paths, W, H, texts = [], walls = [], targetWidthMm = 570) {
   const k = targetWidthMm / W;
   return {
-    polylines: paths.map((pts) => ({ pts, layer: 'DRAW' })),
+    polylines: [
+      ...walls.map((pts) => ({ pts, layer: 'WALL', closed: true })),
+      ...paths.map((pts) => ({ pts, layer: 'DRAW' })),
+    ],
     texts: texts.map((t) => {
       const rot = t.rot || 0;
       if (rot === 90) {
@@ -99,9 +103,14 @@ export function geometryToDxf(geo) {
       // 2점 경로는 LINE으로 (파일 크기 절약)
       e += `  0\nLINE\n  8\n${pl.layer}\n 10\n${X(pts[0][0])}\n 20\n${Y(pts[0][1])}\n 30\n0.0\n 11\n${X(pts[1][0])}\n 21\n${Y(pts[1][1])}\n 31\n0.0\n`;
     } else {
-      // 3점 이상은 R12 클래식 POLYLINE
-      e += `  0\nPOLYLINE\n  8\n${pl.layer}\n 66\n1\n 70\n0\n 10\n0.0\n 20\n0.0\n 30\n0.0\n`;
-      for (const [x, y] of pts) {
+      // 3점 이상은 R12 클래식 POLYLINE (폐곡선은 70=1)
+      let vpts = pts;
+      if (pl.closed && pts.length > 2) {
+        const [fx, fy] = pts[0], [lx, ly] = pts[pts.length - 1];
+        if (Math.hypot(fx - lx, fy - ly) < 0.01) vpts = pts.slice(0, -1);
+      }
+      e += `  0\nPOLYLINE\n  8\n${pl.layer}\n 66\n1\n 70\n${pl.closed ? 1 : 0}\n 10\n0.0\n 20\n0.0\n 30\n0.0\n`;
+      for (const [x, y] of vpts) {
         e += `  0\nVERTEX\n  8\n${pl.layer}\n 10\n${X(x)}\n 20\n${Y(y)}\n 30\n0.0\n`;
       }
       e += `  0\nSEQEND\n  8\n${pl.layer}\n`;
@@ -135,7 +144,10 @@ export function geometryToSvg(geo) {
     for (let i = 1; i < pts.length; i++) {
       d += ` L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
     }
-    s += `<path d="${d}" fill="none" stroke="#e6edf3" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>`;
+    const isWall = pl.layer === 'WALL';
+    const col = isWall ? '#e6edf3' : '#6ee7ff';
+    const sw = isWall ? 2.0 : 1.1;
+    s += `<path d="${d}${pl.closed ? ' Z' : ''}" fill="none" stroke="${col}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
   for (const t of geo.texts || []) {
     const esc = t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -151,13 +163,29 @@ export function geometryToSvg(geo) {
 // 메인 진입점: 이미지 → 문자 인식 → 형상 추적 → DXF + 미리보기
 // ============================================================
 export async function generateDxfFromImage(file) {
-  const { canvas, ctx, width, height } = await loadImageToCanvas(file);
+  const { canvas, ctx, width, height, scale } = await loadImageToCanvas(file);
 
   // 1) 문자 인식 (고해상도 확대 캔버스에서 수행, 실패 시 빈 결과)
+  //    컬러 도면(마루·타일 채움)은 잉크 추출 흑백본에서 인식 → 색 배경 위 글자 인식률 개선
   let texts = [];
   try {
+    const probe = ctx.getImageData(0, 0, width, height);
+    const { bin: inkBin, colorMode } = extractInk(probe.data, width, height);
+    let srcCanvas = canvas;
+    if (colorMode) {
+      srcCanvas = document.createElement('canvas');
+      srcCanvas.width = width;
+      srcCanvas.height = height;
+      const sctx = srcCanvas.getContext('2d');
+      const inkImg = sctx.createImageData(width, height);
+      for (let i = 0; i < width * height; i++) {
+        const v = inkBin[i] ? 0 : 255;
+        inkImg.data[i * 4] = v; inkImg.data[i * 4 + 1] = v; inkImg.data[i * 4 + 2] = v; inkImg.data[i * 4 + 3] = 255;
+      }
+      sctx.putImageData(inkImg, 0, 0);
+    }
     const s = Math.min(2, 2400 / Math.max(width, height));
-    let ocrCanvas = canvas;
+    let ocrCanvas = srcCanvas;
     if (s > 1.01) {
       ocrCanvas = document.createElement('canvas');
       ocrCanvas.width = Math.round(width * s);
@@ -165,7 +193,7 @@ export async function generateDxfFromImage(file) {
       const octx = ocrCanvas.getContext('2d');
       octx.imageSmoothingEnabled = true;
       octx.imageSmoothingQuality = 'high';
-      octx.drawImage(canvas, 0, 0, ocrCanvas.width, ocrCanvas.height);
+      octx.drawImage(srcCanvas, 0, 0, ocrCanvas.width, ocrCanvas.height);
     }
     const raw = await recognizeText(ocrCanvas);
     // 작업 해상도 좌표로 환산
@@ -179,20 +207,41 @@ export async function generateDxfFromImage(file) {
     console.warn('문자 인식 생략:', e);
   }
 
-  // 2) 인식된 글자 영역을 지운 뒤 형상 추적 (글자가 형상으로 중복 추적되는 것 방지)
+  // 2) 워터마크·희미한 오인식 제거: 실제 어두운 잉크가 없는 텍스트는 배제
   const imageData = ctx.getImageData(0, 0, width, height);
+  const darkRatio = (b) => {
+    const x0 = Math.max(0, b.x0 | 0), y0 = Math.max(0, b.y0 | 0);
+    const x1 = Math.min(width - 1, Math.ceil(b.x1)), y1 = Math.min(height - 1, Math.ceil(b.y1));
+    let dark = 0, tot = 0;
+    for (let y = y0; y <= y1; y += 2) {
+      for (let x = x0; x <= x1; x += 2) {
+        const i = (y * width + x) * 4;
+        const lum = 0.299 * imageData.data[i] + 0.587 * imageData.data[i + 1] + 0.114 * imageData.data[i + 2];
+        if (lum < 130) dark++;
+        tot++;
+      }
+    }
+    return tot ? dark / tot : 0;
+  };
+  texts = texts.filter((t) => {
+    const boxes = t.wordBoxes && t.wordBoxes.length ? t.wordBoxes : [t];
+    const r = boxes.reduce((s, b) => s + darkRatio(b), 0) / boxes.length;
+    return r >= 0.02;
+  });
+
+  // 3) 인식된 글자 영역을 지운 뒤 형상 추적 (벽체는 외곽선, 얇은 선은 스켈레톤)
   if (texts.length) {
     blankRegions(imageData.data, width, height, texts.flatMap((t) => t.wordBoxes), 3);
   }
-  const { paths, pointCount } = vectorizePixels(imageData.data, width, height);
+  const { paths, walls, pointCount } = vectorizePixels(imageData.data, width, height, { scale });
 
-  // 3) DXF + 미리보기 생성
-  const geo = pathsToGeometry(paths, width, height, texts);
+  // 4) DXF + 미리보기 생성
+  const geo = pathsToGeometry(paths, width, height, texts, walls);
   const baseName = (file.name || 'drawing').replace(/\.[^.]+$/, '');
   return {
     content: geometryToDxf(geo),
     fileName: `${baseName}.dxf`,
     svg: geometryToSvg(geo),
-    stats: { pathCount: paths.length, pointCount, textCount: texts.length },
+    stats: { pathCount: paths.length, wallCount: walls.length, pointCount, textCount: texts.length },
   };
 }
